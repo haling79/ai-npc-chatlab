@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   character_id CHAR(36),
   prompt_id CHAR(36),
   title VARCHAR(200),
+  summary TEXT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (character_id) REFERENCES characters(id),
   FOREIGN KEY (prompt_id) REFERENCES prompts(id)

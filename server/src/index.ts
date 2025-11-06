@@ -3,7 +3,7 @@ import cors from 'cors';
 import { v4 as uuid } from 'uuid';
 import { initDB, getPool } from './db.js';
 import { ENV } from './env.js';
-import { callLLM } from './llm.js';
+import { callLLM, summarizeConversation } from './llm.js';
 import type { CharacterRow, PromptRow, Meta, Metrics } from './types.js';
 
 // 평가 함수
@@ -132,10 +132,35 @@ app.post('/api/messages', async (req: Request, res: Response) => {
     [sessionId]
   ) as any;
   
-  const history = historyRows.map((row: any) => ({
+  const allHistory = historyRows.map((row: any) => ({
     role: row.role as 'user' | 'npc',
     content: row.content
   }));
+
+  // 대화 히스토리 관리: 최근 15개는 원문, 나머지는 요약
+  let summary = session.summary || '';
+  
+  if (allHistory.length > 15) {
+    const oldMessages = allHistory.slice(0, -15); // 15개 이전의 모든 메시지
+    
+    if (!session.summary) {
+      // 처음 요약 생성
+      summary = await summarizeConversation(oldMessages);
+      await getPool().query('UPDATE sessions SET summary=? WHERE id=?', [summary, sessionId]);
+      console.log(`[Session ${sessionId}] Created initial summary from ${oldMessages.length} old messages`);
+    } else if (oldMessages.length >= 5) {
+      // 요약이 이미 있고, 요약 대상이 5개 이상 증가했으면 재요약
+      // 기존 요약 + 새로운 오래된 메시지들을 함께 요약
+      const previousSummaryContext = [
+        { role: 'npc' as const, content: `[이전 대화 요약]: ${summary}` },
+        ...oldMessages
+      ];
+      
+      summary = await summarizeConversation(previousSummaryContext);
+      await getPool().query('UPDATE sessions SET summary=? WHERE id=?', [summary, sessionId]);
+      console.log(`[Session ${sessionId}] Updated summary: ${oldMessages.length} old messages + previous summary`);
+    }
+  }
 
   const userId = uuid();
   await getPool().query('INSERT INTO messages (id, session_id, role, content, meta) VALUES (?,?,?,?,?)', [
@@ -143,7 +168,13 @@ app.post('/api/messages', async (req: Request, res: Response) => {
   ]);
 
   const systemPrompt = `${(character?.persona ?? '')}\n${(prompt?.system ?? '')}`;
-  const replyText = await callLLM({ model, systemPrompt, userText: content, history });
+  const replyText = await callLLM({ 
+    model, 
+    systemPrompt, 
+    userText: content, 
+    history: allHistory,
+    summary: summary || undefined
+  });
 
   const styleGuide = character?.style_guide ? JSON.parse(character.style_guide) as { tone?: string } : {};
   const metrics = evaluateReply(replyText, styleGuide);
@@ -179,6 +210,8 @@ app.post('/api/messages/compare', async (req: Request, res: Response) => {
     content: row.content
   }));
 
+  const summary = session.summary || undefined;
+
   const userId = uuid();
   await getPool().query('INSERT INTO messages (id, session_id, role, content, meta) VALUES (?,?,?,?,?)', [
     userId, sessionId, 'user', content, JSON.stringify({ at: Date.now(), compare: true } satisfies Meta)
@@ -188,7 +221,7 @@ app.post('/api/messages/compare', async (req: Request, res: Response) => {
 
   const replies: Record<'gemini', { content: string; metrics: Metrics }> = {} as any;
   for (const m of models) {
-    const replyText = await callLLM({ model: m, systemPrompt, userText: content, history });
+    const replyText = await callLLM({ model: m, systemPrompt, userText: content, history, summary });
     const styleGuide = character?.style_guide ? JSON.parse(character.style_guide) as { tone?: string } : {};
     const metrics = evaluateReply(replyText, styleGuide);
     const npcId = uuid();

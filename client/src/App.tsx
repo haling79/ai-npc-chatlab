@@ -482,6 +482,21 @@ export default function App() {
               <button onClick={() => { setSessionId(s.id); loadMessages(s.id); }}>
                 {s.title} — char:{s.character_id?.slice(0,6)} prompt:{s.prompt_id?.slice(0,6)}
               </button>
+              <button
+                style={{ marginLeft: 8, color: 'red' }}
+                onClick={async () => {
+                  if (confirm(`세션 "${s.title}"을(를) 삭제할까요?\n관련된 모든 메시지와 피드백도 함께 삭제됩니다.`)) {
+                    await api.delete(`/sessions/${s.id}`);
+                    setSessions(prev => prev.filter(x => x.id !== s.id));
+                    if (sessionId === s.id) {
+                      setSessionId('');
+                      setMessages([]);
+                    }
+                  }
+                }}
+              >
+                삭제
+              </button>
             </li>
           ))}
         </ul>

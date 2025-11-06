@@ -100,6 +100,15 @@ app.get('/api/sessions', async (_req: Request, res: Response) => {
   res.json(rows);
 });
 
+app.delete('/api/sessions/:id', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  // 세션과 관련된 메시지, 피드백도 함께 삭제
+  await getPool().query('DELETE FROM feedback WHERE message_id IN (SELECT id FROM messages WHERE session_id=?)', [id]);
+  await getPool().query('DELETE FROM messages WHERE session_id=?', [id]);
+  await getPool().query('DELETE FROM sessions WHERE id=?', [id]);
+  res.json({ ok: true });
+});
+
 // ---------- Messages ----------
 app.get('/api/messages/:sessionId', async (req: Request, res: Response) => {
   const { sessionId } = req.params;

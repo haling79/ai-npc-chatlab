@@ -1,5 +1,5 @@
 import express, { Request, Response } from 'express';
-import cors from 'cors';
+import cors, { CorsOptions, CorsOptionsDelegate } from 'cors';
 import { v4 as uuid } from 'uuid';
 import { initDB, getPool } from './db.js';
 import { ENV } from './env.js';
@@ -17,7 +17,45 @@ function evaluateReply(reply: string, styleGuide?: { tone?: string }): Metrics {
 }
 
 const app = express();
-app.use(cors({ origin: ENV.CORS_ORIGIN }));
+
+// Robust CORS handling with detailed logs
+const allowed = (ENV.CORS_ORIGIN || '*')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+
+// Expand localhost entry to also allow 127.0.0.1 on same port
+const expandedAllowed = new Set<string>(allowed);
+for (const o of allowed) {
+  try {
+    const url = new URL(o);
+    if (url.hostname === 'localhost') {
+      expandedAllowed.add(`${url.protocol}//127.0.0.1${url.port ? ':'+url.port : ''}`);
+    }
+    if (url.hostname === '127.0.0.1') {
+      expandedAllowed.add(`${url.protocol}//localhost${url.port ? ':'+url.port : ''}`);
+    }
+  } catch {
+    // ignore invalid URL entries
+  }
+}
+
+const corsDelegate: CorsOptionsDelegate<Request> = (req, cb) => {
+  const origin = req.header('Origin') || '';
+  const hasWildcard = expandedAllowed.has('*');
+  const isAllowed = hasWildcard || (origin && expandedAllowed.has(origin));
+  const baseOptions: CorsOptions = {
+    origin: isAllowed,
+    credentials: true,
+    methods: ['GET','HEAD','PUT','PATCH','POST','DELETE'],
+    allowedHeaders: ['Content-Type','Authorization'],
+  };
+  console.log(`[CORS] Origin: ${origin || '(no origin)'} | Allowed: ${isAllowed} | AllowedList: ${Array.from(expandedAllowed).join(', ')}`);
+  cb(null, baseOptions);
+};
+
+app.use(cors(corsDelegate));
+app.options('*', cors(corsDelegate));
 app.use(express.json());
 
 // ---------- Characters ----------
